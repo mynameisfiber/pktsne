@@ -1,7 +1,12 @@
 from sklearn import datasets
 from sklearn.manifold import TSNE
 from pktsne import PTSNE
+import numpy as np
 import pylab as py
+
+from utils import chunk
+
+import itertools as IT
 
 
 def run_test(name, X, color, perplexity=30, n_iter=1000):
@@ -32,6 +37,42 @@ def test_circles():
                  perplexity=perplexity)
 
 
+def test_ptsne_modes():
+    X, y = datasets.make_circles(n_samples=32*10, noise=.05, factor=0.5)
+    p = {
+        'n_iter': 10,
+        'verbose': 0,
+    }
+
+    print("Test Normal")
+    np.random.seed(42)
+    ptsne_normal = PTSNE(**p).fit_transform(X)
+
+    print("Test Generator nocache")
+    np.random.seed(42)
+    ptsne_gen = PTSNE(batch_size=32, **p).fit_transform(
+        IT.cycle(chunk(X, 32)),
+        batch_count=10,
+        data_shape=(2,),
+        precalc_p=False,
+    )
+    ptsne_gen = np.asarray(list(ptsne_gen)).reshape((X.shape[0], -1))
+
+    print("Test Generator cache")
+    np.random.seed(42)
+    ptsne_genc = PTSNE(batch_size=32, **p).fit_transform(
+        IT.cycle(chunk(X, 32)),
+        batch_count=10,
+        data_shape=(2,),
+        precalc_p=True,
+    )
+    ptsne_genc = np.asarray(list(ptsne_genc)).reshape((X.shape[0], -1))
+
+    assert np.allclose(ptsne_normal, ptsne_gen)
+    assert np.allclose(ptsne_normal, ptsne_genc)
+
+
 if __name__ == "__main__":
+    test_ptsne_modes()
     test_circles()
     test_curve()

@@ -4,7 +4,10 @@ from keras.models import Model, Input
 import numpy as np
 import keras.backend as K
 
-from utils import wrapped_partial
+import itertools as IT
+import types
+
+from utils import wrapped_partial, chunk
 
 
 def Hbeta(D, beta):
@@ -82,32 +85,26 @@ def x2p(X, u=15, tol=1e-4, print_iter=500, max_tries=50, verbose=0):
     return P, beta
 
 
-def compute_joint_probabilities(samples, batch_size=5000, d=2, perplexity=30,
-                                tol=1e-5, verbose=0, print_iter=500,
-                                max_tries=50):
-    # Initialize some variables
-    n = samples.shape[0]
-    batch_size = min(batch_size, n)
-
+def compute_joint_probabilities(batched_samples, batch_size, d=2,
+                                perplexity=30, tol=1e-5, verbose=0,
+                                print_iter=500, max_tries=50):
     # Precompute joint probabilities for all batches
     if verbose > 0:
         print('Precomputing P-values...')
-    batch_count = int(n / batch_size)
-    P = np.zeros((batch_count, batch_size, batch_size))
-    for i, start in enumerate(range(0, n - batch_size + 1, batch_size)):
-        # select batch
-        curX = samples[start:start+batch_size]
+    P = np.zeros((batch_size, batch_size))
+    while True:
+        batch = next(batched_samples)
         # compute affinities using fixed perplexity
-        P[i], beta = x2p(curX, perplexity, tol, verbose=verbose,
-                         print_iter=print_iter, max_tries=max_tries)
+        P, beta = x2p(batch, perplexity, tol, verbose=verbose,
+                      print_iter=print_iter, max_tries=max_tries)
         # make sure we don't have NaN's
-        P[i][np.isnan(P[i])] = 0
+        P[np.isnan(P)] = 0
         # make symmetric
-        P[i] = (P[i] + P[i].T)
+        P = (P + P.T)
         # obtain estimation of joint probabilities
-        P[i] = P[i] / P[i].sum()
-        P[i] = np.maximum(P[i], np.finfo(P[i].dtype).eps)
-    return P
+        P = P / P.sum()
+        P = np.maximum(P, np.finfo(P.dtype).eps)
+        yield P
 
 
 # P is the joint probabilities for this batch (Keras loss functions call this
@@ -148,7 +145,7 @@ def create_model(shape, d=2, batch_size=32):
 class PTSNE(object):
     def __init__(self, X=None, d=2, batch_size=32,
                  perplexity=30, tol=1e-5, print_iter=500, max_tries=50,
-                 n_iter=100, verbose=0):
+                 n_iter=100, verbose=1):
         self.d = d
         self.batch_size = batch_size
         self.perplexity = perplexity
@@ -160,29 +157,85 @@ class PTSNE(object):
         if X is not None:
             self.fit(X)
 
-    def fit(self, X):
-        N = X.shape[0] // self.batch_size * self.batch_size
-        X = np.random.permutation(X[:N])
-        data_shape = X.shape[1:]
-        self.model = create_model(data_shape, self.d, self.batch_size)
-        P = compute_joint_probabilities(
-            X,
-            d=self.d,
-            perplexity=self.perplexity,
-            tol=self.tol,
-            batch_size=self.batch_size,
-            print_iter=self.print_iter,
-            max_tries=self.max_tries,
-            verbose=self.verbose
-        )
-        Y = P.reshape(X.shape[0], -1)
-        self.model.fit(X, Y, batch_size=self.batch_size,
-                       shuffle=False, epochs=self.n_iter,
-                       verbose=self.verbose)
+    def fit(self, X, precalc_p=True, batch_count=None, data_shape=None):
+        # TODO: better check for generator below that deals with
+        # itertools.cycle types since `types.GeneratorType` doesn't work for
+        # that
+        if hasattr(X, '__next__'):
+            if batch_count is None:
+                raise Exception("For generator input, batch_count must "
+                                "be specified")
+            if data_shape is None:
+                raise Exception("For generator input, data_shape must "
+                                "be specified")
+            self.model = create_model(data_shape, self.d, self.batch_size)
+            if not precalc_p:
+                X, X_pgen = IT.tee(X)
+            else:
+                X_pgen = X
+            P_gen = compute_joint_probabilities(
+                X_pgen,
+                batch_size=self.batch_size,
+                d=self.d,
+                perplexity=self.perplexity,
+                tol=self.tol,
+                print_iter=self.print_iter,
+                max_tries=self.max_tries,
+                verbose=self.verbose
+            )
+            if precalc_p:
+                P = list(IT.islice(P_gen, batch_count))
+                P_gen = IT.cycle(P)
+            self.model.fit_generator(
+                zip(X, P_gen),
+                steps_per_epoch=batch_count,
+                shuffle=False,
+                epochs=self.n_iter,
+                verbose=self.verbose
+            )
+        else:
+            N = X.shape[0] // self.batch_size * self.batch_size
+            if N != X.shape[0]:
+                print(("WARNING: Data size not divisible by the batch size. "
+                       "We are going to ignore the last {} "
+                       "samples").format(X.shape[0] - N))
+            n = N // self.batch_size
+            X = X[:N]
+            # X = np.random.permutation(X[:N])
+            data_shape = X.shape[1:]
+            self.model = create_model(data_shape, self.d, self.batch_size)
+            P_gen = compute_joint_probabilities(
+                chunk(X, self.batch_size),
+                batch_size=self.batch_size,
+                d=self.d,
+                perplexity=self.perplexity,
+                tol=self.tol,
+                print_iter=self.print_iter,
+                max_tries=self.max_tries,
+                verbose=self.verbose
+            )
+            P = np.empty((n, self.batch_size, self.batch_size))
+            for i, curP in enumerate(IT.islice(P_gen, n)):
+                P[i] = curP
+            Y = P.reshape((X.shape[0], -1))
+            self.model.fit(
+                X, Y,
+                shuffle=False,
+                epochs=self.n_iter,
+                verbose=self.verbose
+            )
 
-    def transform(self, X):
-        return self.model.predict(X)
+    def transform(self, X, batch_count=None):
+        if hasattr(X, '__next__'):
+            if batch_count is None:
+                raise Exception("For generator input, batch_count must "
+                                "be specified")
+            return map(self.model.predict, IT.islice(X, batch_count))
+        else:
+            return self.model.predict(X)
 
-    def fit_transform(self, X):
-        self.fit(X)
-        return self.transform(X)
+    def fit_transform(self, X, precalc_p=True, batch_count=None,
+                      data_shape=None):
+        self.fit(X, precalc_p=precalc_p, batch_count=batch_count,
+                 data_shape=data_shape)
+        return self.transform(X, batch_count=batch_count)
