@@ -1,0 +1,5 @@
+*.sw*
+__pycache__
+*.pyc
+test/
+venv/
