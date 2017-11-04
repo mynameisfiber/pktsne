@@ -4,7 +4,7 @@ from pktsne import PTSNE
 import numpy as np
 import pylab as py
 
-from utils import chunk
+from utils import chunk, fix_random_seed
 
 from collections import defaultdict
 import itertools as IT
@@ -41,7 +41,10 @@ def test_circles():
 
 
 def test_ptsne_modes():
-    X, y = datasets.make_circles(n_samples=32*10, noise=.05, factor=0.5)
+    batch_size = 32
+    batch_count = 10
+    X, y = datasets.make_circles(n_samples=batch_size*batch_count, noise=.05,
+                                 factor=0.5)
     p = {
         'n_iter': 10,
         'verbose': 0,
@@ -49,25 +52,25 @@ def test_ptsne_modes():
     }
 
     print("Test Normal")
-    np.random.seed(42)
+    fix_random_seed()
     ptsne_normal = PTSNE(**p).fit_transform(X)
 
     print("Test Generator nocache")
-    np.random.seed(42)
-    ptsne_gen = PTSNE(batch_size=32, **p).fit_transform(
-        IT.cycle(chunk(X, 32)),
-        batch_count=10,
-        data_shape=(2,),
+    fix_random_seed()
+    ptsne_gen = PTSNE(batch_size=batch_size, **p).fit_transform(
+        IT.cycle(chunk(X, batch_size)),
+        batch_count=batch_count,
+        data_shape=X.shape[1:],
         precalc_p=False,
     )
     ptsne_gen = np.asarray(list(ptsne_gen)).reshape((X.shape[0], -1))
 
     print("Test Generator cache")
-    np.random.seed(42)
-    ptsne_genc = PTSNE(batch_size=32, **p).fit_transform(
-        IT.cycle(chunk(X, 32)),
-        batch_count=10,
-        data_shape=(2,),
+    fix_random_seed()
+    ptsne_genc = PTSNE(batch_size=batch_size, **p).fit_transform(
+        IT.cycle(chunk(X, batch_size)),
+        batch_count=batch_count,
+        data_shape=X.shape[1:],
         precalc_p=True,
     )
     ptsne_genc = np.asarray(list(ptsne_genc)).reshape((X.shape[0], -1))
@@ -91,50 +94,62 @@ def multiple_gaussians(n_samples, n_dim, n_gaussians):
 
 
 def test_ptsne_modes_timing():
-    N = 1024
-    D = 5
+    N = 2048
+    D = 10
     X = multiple_gaussians(n_samples=N, n_dim=D, n_gaussians=20)
     p = {
-        'n_iter': 10,
+        'n_iter': 25,
         'verbose': 0,
+        'perplexity': 50,
     }
 
-    batch_sizes = [32, 64, 128, 512]
+    start = time.time()
+    TSNE(**{**p, 'n_iter': 250}).fit(X)
+    sklearn_time = (time.time() - start) / 250
+    print("SKLearn Time: {:0.4f}s".format(sklearn_time))
+
+    batch_sizes = [32, 64, 128, 512, 1024]
     timings = defaultdict(list)
     for batch_size in batch_sizes:
+        batch_count = N // batch_size
         print("Batch size:", batch_size)
 
-        print("Test Normal")
-        np.random.seed(42)
+        print("Test Normal:", batch_size)
+        fix_random_seed()
         start = time.time()
         PTSNE(batch_size=batch_size, **p).fit(X)
         timings['normal'].append((time.time() - start) / p['n_iter'])
+        print("Time: {:0.4f}s".format(timings['normal'][-1]))
 
-        print("Test Generator nocache")
-        np.random.seed(42)
+        print("Test Generator nocache:", batch_size)
+        fix_random_seed()
         start = time.time()
         PTSNE(batch_size=batch_size, **p).fit(
             IT.cycle(chunk(X, batch_size)),
-            batch_count=N // batch_size,
+            batch_count=batch_count,
             data_shape=(D,),
             precalc_p=False,
         )
         timings['gen_noc'].append((time.time() - start) / p['n_iter'])
+        print("Time: {:0.4f}s".format(timings['gen_noc'][-1]))
 
-        print("Test Generator cache")
-        np.random.seed(42)
+        print("Test Generator cache:", batch_size)
+        fix_random_seed()
         start = time.time()
         PTSNE(batch_size=batch_size, **p).fit(
             IT.cycle(chunk(X, batch_size)),
-            batch_count=N // batch_size,
+            batch_count=batch_count,
             data_shape=(D,),
             precalc_p=True,
         )
         timings['gen_c'].append((time.time() - start) / p['n_iter'])
+        print("Time: {:0.4f}s".format(timings['gen_c'][-1]))
 
     py.clf()
     for name, times in timings.items():
         py.plot(batch_sizes, times, label=name)
+    py.axhline(y=sklearn_time, label="sklearn")
+    py.legend()
     py.xlabel("Batch Size")
     py.ylabel("Time per epoch")
     py.title("Timing per epoch for different run modes")
@@ -143,7 +158,7 @@ def test_ptsne_modes_timing():
 
 
 if __name__ == "__main__":
-    test_ptsne_modes_timing()
     test_ptsne_modes()
     test_circles()
     test_curve()
+    test_ptsne_modes_timing()

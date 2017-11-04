@@ -5,7 +5,6 @@ import numpy as np
 import keras.backend as K
 
 import itertools as IT
-import types
 
 from utils import wrapped_partial, chunk
 
@@ -13,6 +12,7 @@ from utils import wrapped_partial, chunk
 def Hbeta(D, beta):
     P = np.exp(-D * beta)
     sumP = np.sum(P)
+    sumP = np.maximum(sumP, np.finfo(sumP.dtype).eps)
     H = np.log(sumP) + beta * np.sum(np.multiply(D, P)) / sumP
     P = P / sumP
     return H, P
@@ -91,7 +91,6 @@ def compute_joint_probabilities(batched_samples, batch_size, d=2,
     # Precompute joint probabilities for all batches
     if verbose > 0:
         print('Precomputing P-values...')
-    P = np.zeros((batch_size, batch_size))
     while True:
         batch = next(batched_samples)
         # compute affinities using fixed perplexity
@@ -220,6 +219,7 @@ class PTSNE(object):
             Y = P.reshape((X.shape[0], -1))
             self.model.fit(
                 X, Y,
+                batch_size=self.batch_size,
                 shuffle=self.shuffle,
                 epochs=self.n_iter,
                 verbose=self.verbose

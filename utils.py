@@ -1,4 +1,16 @@
 from functools import partial, update_wrapper
+import numpy as np
+
+try:
+    from tensorflow import set_random_seed
+except ImportError:
+    set_random_seed = None
+
+
+def fix_random_seed(seed=42):
+    np.random.seed(seed)
+    if set_random_seed is not None:
+        set_random_seed(seed)
 
 
 def chunk(X, chunk_size):
@@ -8,6 +20,7 @@ def chunk(X, chunk_size):
     """
     for i in range(0, len(X), chunk_size):
         yield X[i:i+chunk_size]
+
 
 def wrapped_partial(func, *args, **kwargs):
     """
