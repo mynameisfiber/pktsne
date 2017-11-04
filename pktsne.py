@@ -1,11 +1,11 @@
 from keras.layers.core import Dense
 from keras.optimizers import SGD
 from keras.models import Model, Input
+from keras.callbacks import EarlyStopping
 import numpy as np
 import keras.backend as K
 
 import itertools as IT
-import types
 
 from utils import wrapped_partial, chunk
 
@@ -54,7 +54,6 @@ def x2p(X, u=15, tol=1e-4, print_iter=500, max_tries=50, verbose=0):
         Hdiff = H - logU
         tries = 0
         while abs(Hdiff) > tol and tries < max_tries:
-
             # If not, increase or decrease precision
             if Hdiff > 0:
                 betamin = beta[i]
@@ -87,7 +86,7 @@ def x2p(X, u=15, tol=1e-4, print_iter=500, max_tries=50, verbose=0):
 
 def compute_joint_probabilities(batched_samples, batch_size, d=2,
                                 perplexity=30, tol=1e-5, verbose=0,
-                                print_iter=500, max_tries=50):
+                                print_iter=500, max_tries=100):
     # Precompute joint probabilities for all batches
     if verbose > 0:
         print('Precomputing P-values...')
@@ -144,8 +143,9 @@ def create_model(shape, d=2, batch_size=32):
 
 class PTSNE(object):
     def __init__(self, X=None, d=2, batch_size=32,
-                 perplexity=30, tol=1e-5, print_iter=500, max_tries=50,
-                 n_iter=100, verbose=1, shuffle=True):
+                 perplexity=30, tol=1e-5, print_iter=500, max_tries=100,
+                 n_iter=100, verbose=0, shuffle=True,
+                 n_iter_without_progress=100):
         self.d = d
         self.batch_size = batch_size
         self.perplexity = perplexity
@@ -153,6 +153,7 @@ class PTSNE(object):
         self.shuffle = shuffle
         self.print_iter = print_iter
         self.max_tries = max_tries
+        self.n_iter_without_progress = n_iter_without_progress
         self.n_iter = n_iter
         self.verbose = verbose
         if X is not None:
@@ -192,21 +193,26 @@ class PTSNE(object):
                 steps_per_epoch=batch_count,
                 shuffle=self.shuffle,
                 epochs=self.n_iter,
-                verbose=self.verbose
+                verbose=self.verbose,
+                callbacks=[
+                    EarlyStopping(monitor='loss', mode='min', min_delta=1e-4,
+                                  patience=self.n_iter_without_progress),
+                ],
             )
         else:
-            N = X.shape[0] // self.batch_size * self.batch_size
+            batch_size = min(self.batch_size, X.shape[0])
+            N = (X.shape[0] // batch_size) * batch_size
             if N != X.shape[0]:
                 print(("WARNING: Data size not divisible by the batch size. "
                        "We are going to ignore the last {} "
                        "samples").format(X.shape[0] - N))
-            n = N // self.batch_size
+            n = N // batch_size
             X = X[:N]
             data_shape = X.shape[1:]
-            self.model = create_model(data_shape, self.d, self.batch_size)
+            self.model = create_model(data_shape, self.d, batch_size)
             P_gen = compute_joint_probabilities(
-                chunk(X, self.batch_size),
-                batch_size=self.batch_size,
+                chunk(X, batch_size),
+                batch_size=batch_size,
                 d=self.d,
                 perplexity=self.perplexity,
                 tol=self.tol,
@@ -214,7 +220,7 @@ class PTSNE(object):
                 max_tries=self.max_tries,
                 verbose=self.verbose
             )
-            P = np.empty((n, self.batch_size, self.batch_size))
+            P = np.empty((n, batch_size, batch_size))
             for i, curP in enumerate(IT.islice(P_gen, n)):
                 P[i] = curP
             Y = P.reshape((X.shape[0], -1))
@@ -222,7 +228,12 @@ class PTSNE(object):
                 X, Y,
                 shuffle=self.shuffle,
                 epochs=self.n_iter,
-                verbose=self.verbose
+                verbose=self.verbose,
+                batch_size=batch_size,
+                callbacks=[
+                    EarlyStopping(monitor='loss', mode='min', min_delta=1e-4,
+                                  patience=self.n_iter_without_progress),
+                ],
             )
 
     def transform(self, X, batch_count=None):
