@@ -4,47 +4,34 @@ from pktsne import PTSNE
 import numpy as np
 import pylab as py
 
-from utils import chunk, fix_random_seed
+from utils import chunk, fix_random_seed, multiple_gaussians
 
 from collections import defaultdict
 import itertools as IT
 import time
-import random
 
 
-def run_test(name, X, color, perplexity=30, n_iter=1000):
+def run_comparison(name, X, color, perplexity=30, n_iter=1000):
     print(name, "ptsne")
-    ptsne = PTSNE(perplexity=perplexity, n_iter=n_iter).fit_transform(X)
+    ptsne = (PTSNE(perplexity=perplexity, n_iter=n_iter, batch_size=1000)
+             .fit_transform(X))
     py.clf()
     py.scatter(ptsne[:, 0], ptsne[:, 1], label='ptsne', c=color)
+    py.title("PTSNE: " + name)
     py.savefig("test/{}_ptsne.png".format(name), dpi=300)
 
     print(name, "tsne")
     tsne = TSNE(perplexity=perplexity, n_iter=n_iter).fit_transform(X)
     py.clf()
     py.scatter(tsne[:, 0], tsne[:, 1], label='tsne', c=color)
+    py.title("SciKit TSNE: " + name)
     py.savefig("test/{}_tsne.png".format(name), dpi=300)
 
 
-def test_curve():
-    X, y = datasets.make_s_curve(n_samples=100, noise=.05)
-    for perplexity in (5, 30, 50, 100):
-        run_test("S_Curve_{}".format(perplexity), X, color=y,
-                 perplexity=perplexity)
-
-
-def test_circles():
-    X, y = datasets.make_circles(n_samples=100, noise=.05, factor=0.5)
-    for perplexity in (5, 30, 50, 100):
-        run_test("circle_{}".format(perplexity), X, color=y,
-                 perplexity=perplexity)
-
-
-def test_ptsne_modes():
+def run_ptsne_modes(X):
     batch_size = 32
-    batch_count = 10
-    X, y = datasets.make_circles(n_samples=batch_size*batch_count, noise=.05,
-                                 factor=0.5)
+    N = (X.shape[0] // batch_size) * batch_size
+    batch_count = N // batch_size
     p = {
         'n_iter': 10,
         'verbose': 0,
@@ -63,7 +50,8 @@ def test_ptsne_modes():
         data_shape=X.shape[1:],
         precalc_p=False,
     )
-    ptsne_gen = np.asarray(list(ptsne_gen)).reshape((X.shape[0], -1))
+    ptsne_gen = np.asarray(list(ptsne_gen)).reshape((N, -1))
+    assert np.allclose(ptsne_normal, ptsne_gen)
 
     print("Test Generator cache")
     fix_random_seed()
@@ -73,30 +61,39 @@ def test_ptsne_modes():
         data_shape=X.shape[1:],
         precalc_p=True,
     )
-    ptsne_genc = np.asarray(list(ptsne_genc)).reshape((X.shape[0], -1))
-
-    assert np.allclose(ptsne_normal, ptsne_gen)
+    ptsne_genc = np.asarray(list(ptsne_genc)).reshape((N, -1))
     assert np.allclose(ptsne_normal, ptsne_genc)
 
 
-def multiple_gaussians(n_samples, n_dim, n_gaussians):
-    g_params = []
-    for i in range(n_gaussians):
-        mean = np.random.rand(n_dim) * 100
-        B = np.random.rand(n_dim, n_dim) * 5
-        cov = np.dot(B, B.T)
-        g_params.append((mean, cov))
-    result = np.empty((n_samples, n_dim))
-    for i in range(n_samples):
-        params = random.choice(g_params)
-        result[i] = np.random.multivariate_normal(*params)
-    return result
+def test_curve():
+    X, y = datasets.make_s_curve(n_samples=32*10, noise=.05)
+    run_ptsne_modes(X)
+    for perplexity in (5, 30, 50, 100):
+        run_comparison("S_Curve_{}".format(perplexity), X, color=y,
+                       perplexity=perplexity)
+
+
+def test_circles():
+    X, y = datasets.make_circles(n_samples=32*10, noise=.05, factor=0.5)
+    run_ptsne_modes(X)
+    for perplexity in (5, 30, 50, 100):
+        run_comparison("circle_{}".format(perplexity), X, color=y,
+                       perplexity=perplexity)
+
+
+def test_gaussian():
+    np.random.seed(18)
+    X, y = multiple_gaussians(n_samples=32*10, n_dim=5, n_gaussians=3)
+    for perplexity in (5, 30, 50, 100):
+        run_comparison("gaussian_{}".format(perplexity), X, color=y,
+                       perplexity=perplexity)
+    run_ptsne_modes(X)
 
 
 def test_ptsne_modes_timing():
     N = 2048
     D = 10
-    X = multiple_gaussians(n_samples=N, n_dim=D, n_gaussians=20)
+    X, y = multiple_gaussians(n_samples=N, n_dim=D, n_gaussians=20)
     p = {
         'n_iter': 25,
         'verbose': 0,
@@ -158,7 +155,7 @@ def test_ptsne_modes_timing():
 
 
 if __name__ == "__main__":
-    test_ptsne_modes()
+    # test_ptsne_modes_timing()
+    test_gaussian()
     test_circles()
     test_curve()
-    test_ptsne_modes_timing()
