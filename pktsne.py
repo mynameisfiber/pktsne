@@ -129,12 +129,12 @@ def tsne_loss(P, activations, batch_size=32, d=2):
 
 def create_model(shape, d=2, batch_size=32):
     # TODO: read paper to verify model shapes here
-    X = X_in = Input(shape=shape)
+    X = X_in = Input(shape=shape, name='input')
     X = Dense(500, activation='relu')(X)
     X = Dense(500, activation='relu')(X)
     X = Dense(2000, activation='relu')(X)
     X = Dense(d)(X)
-    model = Model(inputs=[X_in], outputs=[X], name='tsne')
+    model = Model(inputs=X_in, outputs=X, name='tsne')
 
     sgd = SGD(lr=0.1)
     loss = wrapped_partial(tsne_loss, batch_size=batch_size, d=d)
@@ -145,11 +145,12 @@ def create_model(shape, d=2, batch_size=32):
 class PTSNE(object):
     def __init__(self, X=None, d=2, batch_size=32,
                  perplexity=30, tol=1e-5, print_iter=500, max_tries=50,
-                 n_iter=100, verbose=1):
+                 n_iter=100, verbose=1, shuffle=True):
         self.d = d
         self.batch_size = batch_size
         self.perplexity = perplexity
         self.tol = tol
+        self.shuffle = shuffle
         self.print_iter = print_iter
         self.max_tries = max_tries
         self.n_iter = n_iter
@@ -189,7 +190,7 @@ class PTSNE(object):
             self.model.fit_generator(
                 zip(X, P_gen),
                 steps_per_epoch=batch_count,
-                shuffle=False,
+                shuffle=self.shuffle,
                 epochs=self.n_iter,
                 verbose=self.verbose
             )
@@ -201,7 +202,6 @@ class PTSNE(object):
                        "samples").format(X.shape[0] - N))
             n = N // self.batch_size
             X = X[:N]
-            # X = np.random.permutation(X[:N])
             data_shape = X.shape[1:]
             self.model = create_model(data_shape, self.d, self.batch_size)
             P_gen = compute_joint_probabilities(
@@ -220,7 +220,7 @@ class PTSNE(object):
             Y = P.reshape((X.shape[0], -1))
             self.model.fit(
                 X, Y,
-                shuffle=False,
+                shuffle=self.shuffle,
                 epochs=self.n_iter,
                 verbose=self.verbose
             )

@@ -6,7 +6,10 @@ import pylab as py
 
 from utils import chunk
 
+from collections import defaultdict
 import itertools as IT
+import time
+import random
 
 
 def run_test(name, X, color, perplexity=30, n_iter=1000):
@@ -42,6 +45,7 @@ def test_ptsne_modes():
     p = {
         'n_iter': 10,
         'verbose': 0,
+        'shuffle': False,
     }
 
     print("Test Normal")
@@ -72,7 +76,74 @@ def test_ptsne_modes():
     assert np.allclose(ptsne_normal, ptsne_genc)
 
 
+def multiple_gaussians(n_samples, n_dim, n_gaussians):
+    g_params = []
+    for i in range(n_gaussians):
+        mean = np.random.rand(n_dim) * 100
+        B = np.random.rand(n_dim, n_dim) * 5
+        cov = np.dot(B, B.T)
+        g_params.append((mean, cov))
+    result = np.empty((n_samples, n_dim))
+    for i in range(n_samples):
+        params = random.choice(g_params)
+        result[i] = np.random.multivariate_normal(*params)
+    return result
+
+
+def test_ptsne_modes_timing():
+    N = 1024
+    D = 5
+    X = multiple_gaussians(n_samples=N, n_dim=D, n_gaussians=20)
+    p = {
+        'n_iter': 10,
+        'verbose': 0,
+    }
+
+    batch_sizes = [32, 64, 128, 512]
+    timings = defaultdict(list)
+    for batch_size in batch_sizes:
+        print("Batch size:", batch_size)
+
+        print("Test Normal")
+        np.random.seed(42)
+        start = time.time()
+        PTSNE(batch_size=batch_size, **p).fit(X)
+        timings['normal'].append((time.time() - start) / p['n_iter'])
+
+        print("Test Generator nocache")
+        np.random.seed(42)
+        start = time.time()
+        PTSNE(batch_size=batch_size, **p).fit(
+            IT.cycle(chunk(X, batch_size)),
+            batch_count=N // batch_size,
+            data_shape=(D,),
+            precalc_p=False,
+        )
+        timings['gen_noc'].append((time.time() - start) / p['n_iter'])
+
+        print("Test Generator cache")
+        np.random.seed(42)
+        start = time.time()
+        PTSNE(batch_size=batch_size, **p).fit(
+            IT.cycle(chunk(X, batch_size)),
+            batch_count=N // batch_size,
+            data_shape=(D,),
+            precalc_p=True,
+        )
+        timings['gen_c'].append((time.time() - start) / p['n_iter'])
+
+    py.clf()
+    for name, times in timings.items():
+        py.plot(batch_sizes, times, label=name)
+    py.xlabel("Batch Size")
+    py.ylabel("Time per epoch")
+    py.title("Timing per epoch for different run modes")
+    py.yscale('log')
+    py.savefig("test/run_mode_timings.png", dpi=300)
+
+
 if __name__ == "__main__":
+    test_ptsne_modes_timing()
     test_ptsne_modes()
     test_circles()
     test_curve()
