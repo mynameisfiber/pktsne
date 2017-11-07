@@ -1,8 +1,8 @@
 import numpy as np
 
+import itertools as IT
 import random
 from functools import partial, update_wrapper
-import numpy as np
 
 try:
     from tensorflow import set_random_seed
@@ -10,9 +10,17 @@ except ImportError:
     set_random_seed = None
 
 
-def fix_random_seed(seed=42):
+def iter_double(iter_):
+    for item in iter_:
+        yield item
+        yield item
+
+
+def fix_random_seed(seed=1):
+    print("Setting numpy random seed")
     np.random.seed(seed)
     if set_random_seed is not None:
+        print("Setting tensorflow random seed")
         set_random_seed(seed)
 
 
@@ -30,6 +38,10 @@ def multiple_gaussians(n_samples, n_dim, n_gaussians):
         X[i] = np.random.multivariate_normal(*params)
         y[i] = j
     return X, y
+
+
+def inf_chunk(X, chunk_size):
+    yield from IT.cycle(chunk(X, chunk_size))
 
 
 def chunk(X, chunk_size):

@@ -7,7 +7,7 @@ import keras.backend as K
 
 import itertools as IT
 
-from utils import wrapped_partial, chunk
+from utils import wrapped_partial, chunk, iter_double
 
 
 def Hbeta(D, beta):
@@ -38,7 +38,6 @@ def x2p(X, u=15, tol=1e-4, print_iter=500, max_tries=50, verbose=0):
     if verbose > 0:
         print('Computing P-values...')
     for i in range(n):
-
         if verbose > 1 and print_iter and i % print_iter == 0:
             print('Computed P-values {} of {} datapoints...'.format(i, n))
 
@@ -144,8 +143,8 @@ def create_model(shape, d=2, batch_size=32):
 class PTSNE(object):
     def __init__(self, X=None, d=2, batch_size=32,
                  perplexity=30, tol=1e-5, print_iter=500, max_tries=100,
-                 n_iter=100, verbose=0, shuffle=True,
-                 n_iter_without_progress=100):
+                 n_iter=100, verbose=0, shuffle=False,
+                 n_iter_without_progress=50):
         self.d = d
         self.batch_size = batch_size
         self.perplexity = perplexity
@@ -172,18 +171,16 @@ class PTSNE(object):
                                 "be specified")
             self.model = create_model(data_shape, self.d, self.batch_size)
             if not precalc_p:
-                X, X_pgen = IT.tee(X)
-            else:
-                X_pgen = X
+                X = iter_double(X)
             P_gen = compute_joint_probabilities(
-                X_pgen,
+                X,
                 batch_size=self.batch_size,
                 d=self.d,
                 perplexity=self.perplexity,
                 tol=self.tol,
                 print_iter=self.print_iter,
                 max_tries=self.max_tries,
-                verbose=self.verbose
+                verbose=self.verbose - 1,
             )
             if precalc_p:
                 P = list(IT.islice(P_gen, batch_count))
@@ -218,7 +215,7 @@ class PTSNE(object):
                 tol=self.tol,
                 print_iter=self.print_iter,
                 max_tries=self.max_tries,
-                verbose=self.verbose
+                verbose=self.verbose - 1,
             )
             P = np.empty((n, batch_size, batch_size))
             for i, curP in enumerate(IT.islice(P_gen, n)):
@@ -230,7 +227,6 @@ class PTSNE(object):
                 shuffle=self.shuffle,
                 epochs=self.n_iter,
                 verbose=self.verbose,
-                batch_size=batch_size,
                 callbacks=[
                     EarlyStopping(monitor='loss', mode='min', min_delta=1e-4,
                                   patience=self.n_iter_without_progress),
