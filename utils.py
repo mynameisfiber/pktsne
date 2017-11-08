@@ -3,11 +3,22 @@ import numpy as np
 import itertools as IT
 import random
 from functools import partial, update_wrapper
+import time
+from contextlib import contextmanager
 
 try:
     from tensorflow import set_random_seed
 except ImportError:
     set_random_seed = None
+
+
+@contextmanager
+def Timer(name):
+    print("Starting:", name)
+    start = time.time()
+    yield
+    dt = time.time() - start
+    print("Time elapsed: {}: {:0.4f}s".format(name, dt))
 
 
 def iter_double(iter_):

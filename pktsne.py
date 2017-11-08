@@ -72,6 +72,10 @@ def x2p(X, u=15, tol=1e-4, print_iter=500, max_tries=50, verbose=0):
             H, thisP = Hbeta(Di, beta[i])
             Hdiff = H - logU
             tries += 1
+        if tries >= max_tries:
+            print(("WARNING: Could not iterate to desired perplexity {}.  Got "
+                   "perplexity {} in {} iterations").format(np.exp(logU),
+                                                            np.exp(H), tries))
 
         # Set the final row of P
         P[i, indices] = thisP
@@ -163,6 +167,13 @@ class PTSNE(object):
         # itertools.cycle types since `types.GeneratorType` doesn't work for
         # that
         if hasattr(X, '__next__'):
+            if K.backend() == "tensorflow":
+                print("WARNING: Tensorflow backend is known to cause "
+                      "generator syncing issues which have yet to be "
+                      "resolved. This will cause datapoints to go off-sync "
+                      "with target variables and result in "
+                      "mis-classifications. Use the Theano backend for "
+                      "tested results.")
             if batch_count is None:
                 raise Exception("For generator input, batch_count must "
                                 "be specified")
@@ -191,6 +202,8 @@ class PTSNE(object):
                 shuffle=self.shuffle,
                 epochs=self.n_iter,
                 verbose=self.verbose,
+                max_queue_size=128,
+                use_multiprocessing=True,
                 callbacks=[
                     EarlyStopping(monitor='loss', mode='min', min_delta=1e-4,
                                   patience=self.n_iter_without_progress),
@@ -235,6 +248,13 @@ class PTSNE(object):
 
     def transform(self, X, batch_count=None):
         if hasattr(X, '__next__'):
+            if K.backend() == "tensorflow":
+                print("WARNING: Tensorflow backend is known to cause "
+                      "generator syncing issues which have yet to be "
+                      "resolved. This will cause datapoints to go off-sync "
+                      "with target variables and result in "
+                      "mis-classifications. Use the Theano backend for "
+                      "tested results.")
             if batch_count is None:
                 raise Exception("For generator input, batch_count must "
                                 "be specified")
