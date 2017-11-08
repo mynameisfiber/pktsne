@@ -5,7 +5,7 @@ import numpy as np
 import pylab as py
 import keras.backend as K
 
-from utils import inf_chunk, fix_random_seed, multiple_gaussians, Timer
+from .utils import inf_chunk, fix_random_seed, multiple_gaussians, Timer
 
 from collections import defaultdict
 import time

@@ -7,7 +7,7 @@ import keras.backend as K
 
 import itertools as IT
 
-from utils import wrapped_partial, chunk, iter_double
+from .utils import wrapped_partial, chunk, iter_double
 
 
 def Hbeta(D, beta):
