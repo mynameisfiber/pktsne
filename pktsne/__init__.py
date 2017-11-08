@@ -1,3 +1,1 @@
-from pktsne import PTSNE
-
-__version__ = "0.1.0"
+from .pktsne import PTSNE
