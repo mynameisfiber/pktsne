@@ -1,7 +1,8 @@
 #!/usr/bin/env python
 
 from setuptools import setup, find_packages
-from pktsne import __version__
+
+__version__ = "0.1.0"
 
 requirements = [line.strip() for line in open("requirements.txt")]
 
