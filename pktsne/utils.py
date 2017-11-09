@@ -5,11 +5,21 @@ import random
 from functools import partial, update_wrapper
 import time
 from contextlib import contextmanager
+import multiprocessing as mp
 
 try:
     from tensorflow import set_random_seed
 except ImportError:
     set_random_seed = None
+
+
+def np_to_sharedarray(array):
+    typecode = array.dtype.char
+    return mp.Array(typecode, array)
+
+
+def sharedarray_to_np(array, dtype):
+    return np.frombuffer(array.obj(), dtype)
 
 
 @contextmanager

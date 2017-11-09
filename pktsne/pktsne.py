@@ -5,9 +5,11 @@ from keras.callbacks import EarlyStopping
 import numpy as np
 import keras.backend as K
 
+import multiprocessing as mp
 import itertools as IT
 
 from .utils import wrapped_partial, chunk, iter_double
+from .utils import np_to_sharedarray, sharedarray_to_np
 
 
 def Hbeta(D, beta):
@@ -19,12 +21,65 @@ def Hbeta(D, beta):
     return H, P
 
 
-def x2p(X, u=15, tol=1e-4, print_iter=500, max_tries=50, verbose=0):
-    # Initialize some variables
-    n = X.shape[0]                     # number of instances
-    P = np.zeros((n, n))               # empty probability matrix
-    beta = np.ones(n)                  # empty precision vector
-    logU = np.log(u)                   # log of perplexity (= entropy)
+def x2p_iter(i, n, P, beta, D, logU, verbose=0, print_iter=500, tol=1e-4,
+             max_tries=50):
+    if verbose > 1 and print_iter and i % print_iter == 0:
+        print('Computed P-values {} of {} datapoints...'.format(i, n))
+
+    # Set minimum and maximum values for precision
+    betamin = float('-inf')
+    betamax = float('+inf')
+
+    # Compute the Gaussian kernel and entropy for the current precision
+    indices = np.concatenate((np.arange(0, i), np.arange(i + 1, n)))
+    Di = D[i, indices]
+    H, thisP = Hbeta(Di, beta[i])
+
+    # Evaluate whether the perplexity is within tolerance
+    Hdiff = H - logU
+    tries = 0
+    while abs(Hdiff) > tol and tries < max_tries:
+        # If not, increase or decrease precision
+        if Hdiff > 0:
+            betamin = beta[i]
+            if np.isinf(betamax):
+                beta[i] *= 2
+            else:
+                beta[i] = (beta[i] + betamax) / 2
+        else:
+            betamax = beta[i]
+            if np.isinf(betamin):
+                beta[i] /= 2
+            else:
+                beta[i] = (beta[i] + betamin) / 2
+
+        # Recompute the values
+        H, thisP = Hbeta(Di, beta[i])
+        Hdiff = H - logU
+        tries += 1
+    if tries >= max_tries:
+        print(("WARNING: Could not iterate to desired perplexity {}.  Got "
+               "perplexity {} in {} iterations").format(np.exp(logU),
+                                                        np.exp(H), tries))
+
+    # Set the final row of P
+    P[i, indices] = thisP
+
+
+def x2p_iter_star(args):
+    return x2p_iter(*args)
+
+
+def x2p(X, u=15, tol=1e-4, print_iter=500, max_tries=50, verbose=0,
+        n_jobs=None):
+    # number of instances
+    n = X.shape[0]
+    # empty probability matrix
+    P = np_to_sharedarray(np.zeros((n, n), dtype='float'))
+    # empty precision vector
+    beta = np_to_sharedarray(np.ones(n, dtype='float'))
+    # log of perplexity (= entropy)
+    logU = np_to_sharedarray(np.log(u))
 
     # Compute pairwise distances
     if verbose > 0:
@@ -37,48 +92,13 @@ def x2p(X, u=15, tol=1e-4, print_iter=500, max_tries=50, verbose=0):
     # Run over all datapoints
     if verbose > 0:
         print('Computing P-values...')
-    for i in range(n):
-        if verbose > 1 and print_iter and i % print_iter == 0:
-            print('Computed P-values {} of {} datapoints...'.format(i, n))
 
-        # Set minimum and maximum values for precision
-        betamin = float('-inf')
-        betamax = float('+inf')
-
-        # Compute the Gaussian kernel and entropy for the current precision
-        indices = np.concatenate((np.arange(0, i), np.arange(i + 1, n)))
-        Di = D[i, indices]
-        H, thisP = Hbeta(Di, beta[i])
-
-        # Evaluate whether the perplexity is within tolerance
-        Hdiff = H - logU
-        tries = 0
-        while abs(Hdiff) > tol and tries < max_tries:
-            # If not, increase or decrease precision
-            if Hdiff > 0:
-                betamin = beta[i]
-                if np.isinf(betamax):
-                    beta[i] *= 2
-                else:
-                    beta[i] = (beta[i] + betamax) / 2
-            else:
-                betamax = beta[i]
-                if np.isinf(betamin):
-                    beta[i] /= 2
-                else:
-                    beta[i] = (beta[i] + betamin) / 2
-
-            # Recompute the values
-            H, thisP = Hbeta(Di, beta[i])
-            Hdiff = H - logU
-            tries += 1
-        if tries >= max_tries:
-            print(("WARNING: Could not iterate to desired perplexity {}.  Got "
-                   "perplexity {} in {} iterations").format(np.exp(logU),
-                                                            np.exp(H), tries))
-
-        # Set the final row of P
-        P[i, indices] = thisP
+    with mp.Pool(n_jobs) as pool:
+        tasks = [(i, n, P, beta, D, logU, verbose, print_iter, tol, max_tries)
+                 for i in range(n)]
+        pool.map(x2p_iter_star, tasks)
+    P = sharedarray_to_np(P, 'float')
+    beta = sharedarray_to_np(beta, 'float')
 
     if verbose > 0:
         print('Mean value of sigma: {}'.format(np.mean(np.sqrt(1 / beta))))
@@ -196,7 +216,7 @@ class PTSNE(object):
             if precalc_p:
                 P = list(IT.islice(P_gen, batch_count))
                 P_gen = IT.cycle(P)
-            self.model.fit_generator(
+            self.history = self.model.fit_generator(
                 zip(X, P_gen),
                 steps_per_epoch=batch_count,
                 shuffle=self.shuffle,
@@ -234,7 +254,7 @@ class PTSNE(object):
             for i, curP in enumerate(IT.islice(P_gen, n)):
                 P[i] = curP
             Y = P.reshape((X.shape[0], -1))
-            self.model.fit(
+            self.history = self.model.fit(
                 X, Y,
                 batch_size=self.batch_size,
                 shuffle=self.shuffle,
@@ -245,6 +265,8 @@ class PTSNE(object):
                                   patience=self.n_iter_without_progress),
                 ],
             )
+        self._loss = self.history.history['loss'][-1]
+        return self
 
     def transform(self, X, batch_count=None):
         if hasattr(X, '__next__'):
