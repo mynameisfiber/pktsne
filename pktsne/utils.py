@@ -2,7 +2,7 @@ import numpy as np
 
 import itertools as IT
 import random
-from functools import partial, update_wrapper
+from functools import partial, update_wrapper, reduce
 import time
 from contextlib import contextmanager
 import multiprocessing as mp
@@ -13,9 +13,12 @@ except ImportError:
     set_random_seed = None
 
 
-def np_to_sharedarray(array):
-    typecode = array.dtype.char
-    return mp.Array(typecode, array)
+def np_to_sharedarray(size, dtype):
+    typecode = dtype.char
+    count = reduce(int.__mul__, size, 1)
+    mp_arr = mp.Array(typecode, count)
+    arr = np.frombuffer(mp_arr.get_obj(), dtype=dtype, count=count)
+    return arr.reshape(size)
 
 
 def sharedarray_to_np(array, dtype):

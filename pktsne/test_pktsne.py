@@ -1,10 +1,10 @@
 from sklearn import datasets
 from sklearn.manifold import TSNE
-from pktsne import PTSNE
 import numpy as np
 import pylab as py
 import keras.backend as K
 
+from .pktsne import PTSNE
 from .utils import inf_chunk, fix_random_seed, multiple_gaussians, Timer
 
 from collections import defaultdict

@@ -75,11 +75,13 @@ def x2p(X, u=15, tol=1e-4, print_iter=500, max_tries=50, verbose=0,
     # number of instances
     n = X.shape[0]
     # empty probability matrix
-    P = np_to_sharedarray(np.zeros((n, n), dtype='float'))
+    P = np_to_sharedarray((n, n), dtype=np.dtype('float'))
+    P[:] = 0
     # empty precision vector
-    beta = np_to_sharedarray(np.ones(n, dtype='float'))
+    beta = np_to_sharedarray((n,), dtype=np.dtype('float'))
+    beta[:] = 1
     # log of perplexity (= entropy)
-    logU = np_to_sharedarray(np.log(u))
+    logU = np.log(u)
 
     # Compute pairwise distances
     if verbose > 0:
@@ -93,12 +95,14 @@ def x2p(X, u=15, tol=1e-4, print_iter=500, max_tries=50, verbose=0,
     if verbose > 0:
         print('Computing P-values...')
 
-    with mp.Pool(n_jobs) as pool:
-        tasks = [(i, n, P, beta, D, logU, verbose, print_iter, tol, max_tries)
-                 for i in range(n)]
-        pool.map(x2p_iter_star, tasks)
-    P = sharedarray_to_np(P, 'float')
-    beta = sharedarray_to_np(beta, 'float')
+    if n_jobs == 0:
+        for i in range(n):
+            x2p_iter(i, n, P, beta, D, logU, verbose, print_iter, tol, max_tries)
+    else:
+        with mp.Pool(n_jobs) as pool:
+            tasks = [(i, n, P, beta, D, logU, verbose, print_iter, tol, max_tries)
+                     for i in range(n)]
+            pool.map(x2p_iter_star, tasks)
 
     if verbose > 0:
         print('Mean value of sigma: {}'.format(np.mean(np.sqrt(1 / beta))))
@@ -109,8 +113,8 @@ def x2p(X, u=15, tol=1e-4, print_iter=500, max_tries=50, verbose=0,
 
 
 def compute_joint_probabilities(batched_samples, batch_size, d=2,
-                                perplexity=30, tol=1e-5, verbose=0,
-                                print_iter=500, max_tries=100):
+                                perplexity=30, tol=1e-5, n_jobs=None,
+                                verbose=0, print_iter=500, max_tries=100):
     # Precompute joint probabilities for all batches
     if verbose > 0:
         print('Precomputing P-values...')
@@ -118,7 +122,8 @@ def compute_joint_probabilities(batched_samples, batch_size, d=2,
         batch = next(batched_samples)
         # compute affinities using fixed perplexity
         P, beta = x2p(batch, perplexity, tol, verbose=verbose,
-                      print_iter=print_iter, max_tries=max_tries)
+                      n_jobs=n_jobs, print_iter=print_iter,
+                      max_tries=max_tries)
         # make sure we don't have NaN's
         P[np.isnan(P)] = 0
         # make symmetric
@@ -209,6 +214,7 @@ class PTSNE(object):
                 d=self.d,
                 perplexity=self.perplexity,
                 tol=self.tol,
+                n_jobs=0 if not precalc_p else None,
                 print_iter=self.print_iter,
                 max_tries=self.max_tries,
                 verbose=self.verbose - 1,
