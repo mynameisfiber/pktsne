@@ -9,6 +9,7 @@ from .utils import inf_chunk, fix_random_seed, multiple_gaussians, Timer
 
 from collections import defaultdict
 import time
+import io
 
 
 def run_comparison(name, X, color, perplexity=30, n_iter=1000):
@@ -256,9 +257,26 @@ def test_ptsne_batch_timing():
     py.savefig("figures/run_mode_batch_timings.png", dpi=300)
 
 
+def test_serialize():
+    X, y = datasets.make_s_curve(n_samples=64, noise=.05)
+    ptsne1 = PTSNE(X, n_iter=10, batch_size=64)
+    fd = io.BytesIO()
+    ptsne1.save(fd)
+
+    fd.seek(0)
+    ptsne2 = PTSNE.load(fd)
+
+    y1 = ptsne1.transform(X)
+    y2 = ptsne2.transform(X)
+
+    assert np.allclose(y1, y2)
+
+
+
 if __name__ == "__main__":
-    test_curve()
-    test_gaussian()
-    test_circles()
-    test_ptsne_N_timing()
-    test_ptsne_batch_timing()
+    test_serialize()
+    # test_curve()
+    # test_gaussian()
+    # test_circles()
+    # test_ptsne_N_timing()
+    # test_ptsne_batch_timing()

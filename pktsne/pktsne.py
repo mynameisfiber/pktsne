@@ -1,11 +1,12 @@
 from keras.layers.core import Dense
 from keras.optimizers import SGD
-from keras.models import Model, Input
+from keras.models import Model, Input, model_from_json
 from keras.callbacks import EarlyStopping
 import numpy as np
 import keras.backend as K
 
 import itertools as IT
+import pickle
 
 from .utils import wrapped_partial, chunk, iter_double
 
@@ -159,8 +160,45 @@ class PTSNE(object):
         self.n_iter_without_progress = n_iter_without_progress
         self.n_iter = n_iter
         self.verbose = verbose
+        self.model = None
+        self._history = None
+        self._loss = None
         if X is not None:
             self.fit(X)
+
+    def save(self, fd):
+        params = {
+            "d": self.d,
+            "batch_size": self.batch_size,
+            "perplexity": self.perplexity,
+            "tol": self.tol,
+            "shuffle": self.shuffle,
+            "print_iter": self.print_iter,
+            "max_tries": self.max_tries,
+            "n_iter_without_progress": self.n_iter_without_progress,
+            "n_iter": self.n_iter,
+            "verbose": self.verbose,
+            "_history": self._history,
+            "_loss": self._loss,
+        }
+        if self.model is not None:
+            params["_weights"] = self.model.get_weights()
+            params["_modelspec"] = self.model.to_json()
+        pickle.dump(params, fd)
+
+    @staticmethod
+    def load(fd):
+        data = pickle.load(fd)
+        ptsne = PTSNE.__new__(PTSNE)
+
+        if "_modelspec" in data and "_weights" in data:
+            modelspec = data.pop("_modelspec")
+            weights = data.pop("_weights")
+            ptsne.model = model_from_json(modelspec)
+            ptsne.model.set_weights(weights)
+        for key, value in data.items():
+            setattr(ptsne, key, value)
+        return ptsne
 
     def fit(self, X, precalc_p=True, batch_count=None, data_shape=None):
         # TODO: better check for generator below that deals with
@@ -196,7 +234,7 @@ class PTSNE(object):
             if precalc_p:
                 P = list(IT.islice(P_gen, batch_count))
                 P_gen = IT.cycle(P)
-            self.model.fit_generator(
+            history = self.model.fit_generator(
                 zip(X, P_gen),
                 steps_per_epoch=batch_count,
                 shuffle=self.shuffle,
@@ -234,7 +272,7 @@ class PTSNE(object):
             for i, curP in enumerate(IT.islice(P_gen, n)):
                 P[i] = curP
             Y = P.reshape((X.shape[0], -1))
-            self.model.fit(
+            history = self.model.fit(
                 X, Y,
                 batch_size=self.batch_size,
                 shuffle=self.shuffle,
@@ -245,6 +283,9 @@ class PTSNE(object):
                                   patience=self.n_iter_without_progress),
                 ],
             )
+        self._history = history
+        self._loss = history.history['loss'][-1]
+        return self
 
     def transform(self, X, batch_count=None):
         if hasattr(X, '__next__'):
